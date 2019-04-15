@@ -1,38 +1,22 @@
 package com.cn.paic
-
-import org.apache.spark.mllib.clustering.{KMeans, KMeansModel} 
-import org.apache.spark.mllib.linalg.Vectors
-import org.apache.spark.mllib.{SparkContext, SparkConf}
 import java.io.File
+import java.lang.Math.{pow, sqrt}
+import org.apache.spark.sql.SparkSession
+import scala.annotation.tailrec
+import scala.util.Random
+import scala.collection.immutable.ListMap
 
-// Load and parse the data
-val data = sc.textFile("data/mllib/kmeans_data.txt")
-val parsedData = data.map(s => Vectors.dense(s.split(' ').map(_.toDouble))).cache()
-
-// Cluster the data into two classes using KMeans
-val numClusters = 3
-val numIterations = 20
-val clusters = KMeans.train(parsedData, numClusters, numIterations)
-
-// Evaluate clustering by computing Within Set Sum of Squared Errors
-val WSSSE = clusters.computeCost(parsedData)
-println(s"Within Set Sum of Squared Errors = $WSSSE")
-
-// Save and load model
-clusters.save(sc, "target/org/apache/spark/KMeansExample/KMeansModel")
-val sameModel = KMeansModel.load(sc, "target/org/apache/spark/KMeansExample/KMeansModel")
 
 class KMeansClustering {
-	// base RDD
-	val data = sc.textFile("hdfs_file_path")
-	val path_in = ""
-	val path_out = ""
-	// Transform RDDs
-	var errors = line.filter(_.startsWith("ERROR"))
-	val messages = error.map(_.split("\t")).map(r => r(1))
-	messages.cache()
-	// Action 1: Count the word mysql from cache
-	messages.filter(_.contains("mysql")).count()
+	def initData(file_path:String): List = {
+		val clusters = 4
+		val lines = spark.read.textFile(file_path).rdd
+		val data = lines.map(parseVector _).cache()
+		var errors = lines.filter(_.startsWith("ERROR"))
+		val messages = error.map(_.split("\t")).map(r => r(1))
+		messages.cache()
+		List(lines, data)
+	}
 
 	def initCentroids(k:Int, num:Int):Seq[Point] = {
 		val randx = new Random(1)
@@ -46,14 +30,12 @@ class KMeansClustering {
 		}).to[mutable.ArrayBuffer]
 	}
 
-	
-
-	def initializeMeans(k: Int, points: Seq[Point]): Seq[Point] = {
+	def initMeans(k: Int, points: Seq[Point]): Seq[Point] = {
         val rand = new Random(7)
         (0 until k).map(_ => points(rand.nextInt(points.length))).to[mutable.ArrayBuffer]
     }
 
-    def findClosest(p: Point, means: GenSeq[Point]): Point = {
+    def closestPoint(p: Point, means: GenSeq[Point]): Point = {
         assert(means.size > 0)
         var minDistance = p.squareDistance(means(0))
         var closest = means(0)
@@ -67,6 +49,23 @@ class KMeansClustering {
             i += 1
         }
         closest
+    }
+
+    def validate(coords: List) {
+    	if (coords[0] == 'SHOT_DIST')
+    		false
+    	for (x <- coords)
+    		if (x == "")
+    			false
+    		else if (x.toFloat < 0)
+    			false
+    	true
+    }
+
+    def errorWarning() {
+    	System.err.println(
+    		"Error Warning".stripMargin
+    	)
     }
 
     // First half to ensure all means are in the result even if some might have empty lists
@@ -103,10 +102,6 @@ class KMeansClustering {
     }
 }
 
-/** Describes one point in three-dimensional space.
- *
- *  Note: deliberately uses reference equality.
- */
 class Point(val x: Double, val y: Double, val z: Double) {
     private def square(v: Double): Double = v * v
     def squareDistance(that: Point): Double = {
@@ -127,26 +122,45 @@ object KMeansRunner {
     ) withWarmer(new Warmer.Default)
 
     def main(args: Array[String]) {
-        val kMeans = new KMeans()
+    	if (args.length < 3) {
+    		System.err.println("Usage: KMeansClustering <file> <k> <convergeDist>")
+    		System.exit(1)
+    	}
 
-        val numPoints = 500000
+    	errorWarning()
+
+        val kMeans = new KMeansClustering()
+
+        val players: List[String] = List("james harden", "lebron james", "chris paul", "stephen curry")
+
+        val numPoints = kMeans.initData()
         val eta = 0.01
-        val k = 32
-        val points = kMeans.generatePoints(k, numPoints)
-        val means = kMeans.initializeMeans(k, points)
+        val k = 4
+        val points = kMeans.initCentroids(k, numPoints)
+        val means = kMeans.initMeans(k, points)
+        var player_map:Map[Char, Int] = Map()
 
-        val seqtime = standardConfig measure {
-            kMeans.kMeans(points, means, eta)
-        }
-        println(s"sequential time: $seqtime ms")
+        for (lines <- data)
+        	var cluster_map:Map[Char, Float] = Map()
+        	var player = map(_.split("\t")).map(r => r(1))
+        	var cluster = map(_.split("\t")).map(r => r(2))
+        	var made = map(_.split("\t")).map(r => r(3))
+        	made = made.toInt
+        	if player_map.contains(player)
+        		cluster_map[cluster] = [made, 1.0]
+        		player_map[player] = cluster_map
+        	else
+        		cluster_map = player_map[player]
+        		var val:List = (cluster, [0, 0.0])
+        		cluster_map[cluster] = [val[0] + made, val[1] + 1]
+        		player_map[player] = cluster_map
+        for ((k, v) <- player_map)
+        	for (lines <- player_map)
+        		v = v[0] / v[1]
+        val rate:Float = ListMap(player_map.toSeq.sortWith(_._2 > _._2):*)
+        for ((k, v) <- player_map)
+        	println("key: %s, value: %s\n", $k, $v)
 
-        val partime = standardConfig measure {
-            val parPoints = points.par
-            val parMeans = means.par
-            kMeans.kMeans(parPoints, parMeans, eta)
-        }
-        println(s"parallel time: $partime ms")
-        println(s"speedup: ${seqtime / partime}")
+        
     }
-}
 }
